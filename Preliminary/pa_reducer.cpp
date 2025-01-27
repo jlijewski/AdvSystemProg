@@ -14,6 +14,7 @@ int main() {
     string action;
     string topic;
     int score;
+    int end;
     
 
     int counter = 0;
@@ -38,7 +39,7 @@ int main() {
 
         prevId = id;
         id = inputLine.substr(1,4);
-        action = inputLine.substr(6,1);
+        action = "test";//nputLine.substr(6,1);
         
         auto position = inputLine.find(')');
 
@@ -46,36 +47,69 @@ int main() {
             cout << "ERROR ')' NOT FOUND " << endl;
             continue;
          }
-        topic = inputLine.substr(8,(position - 8));
+        //topic = inputLine.substr(8,(position - 8));
         
-        data.push_back({id,action,topic});
+        if(inputLine.empty())
+        {
+            score = 0;
+        }
+        else{
+            
+            score = stoi(inputLine.substr(position - 2,2));
+            if(inputLine[position - 3] == '-')
+            {
+                score *= -1;
+            }
+        }
+
         
-        if (action == "P")
+        if(score < 0 )
         {
-            score = 50;
+            end = position - 4;
+            position -= 5;
         }
-        else if(action == "L")
+        else{
+            end = position - 3;
+            position -= 4;
+        }
+       
+        while (inputLine[position] != ',')
         {
-            score = 20;
+            position -= 1;
         }
-        else if(action == "D")
-        {
-            score = -10;
-        }
-        else if(action == "C")
-        {
-            score = 30;
-        }
-        else if(action == "S")
-        {
-            score = 40;
-        }
+        topic = inputLine.substr(position+1, (end - position) - 1);
+
+
+        
+        //data.push_back({id,action,topic});
+        
+        // if (action == "P")
+        // {
+        //     score = 50;
+        // }
+        // else if(action == "L")
+        // {
+        //     score = 20;
+        // }
+        // else if(action == "D")
+        // {
+        //     score = -10;
+        // }
+        // else if(action == "C")
+        // {
+        //     score = 30;
+        // }
+        // else if(action == "S")
+        // {
+        //     score = 40;
+        // }
         
    
         // cout << "(" << id << "," << topic << "," << score << ")"<< endl;
 
 
         // counter++;
+        
         dataMap[id][topic] += score;
 
         if(counter != 0 && prevId != id )
