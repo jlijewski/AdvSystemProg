@@ -32,8 +32,11 @@ struct buffer {
     pthread_cond_t cond_full = PTHREAD_COND_INITIALIZER;
     pthread_cond_t cond_empty = PTHREAD_COND_INITIALIZER;
     pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+    bool repeatedID = false;
 };
 pthread_mutex_t finished_mtx = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t printing_mtx = PTHREAD_MUTEX_INITIALIZER;
+
 map<int,buffer> reducerBuffers;
 
 static void *mapper(void *arg) {
@@ -44,6 +47,7 @@ static void *mapper(void *arg) {
     string topic;
     int score;
     int id_first;
+    bool repeated = false;
 
     int counter = 0;
     vector<vector<string>> data;
@@ -94,8 +98,17 @@ static void *mapper(void *arg) {
         {
             score = 40;
         }
+        
+        if(id[0] == id[1] && id[1] == id[2] && id[2] == id[3] && id[3] == id[0])
+        {
+            id_first = (id[0] - '0') - 1;
+            repeated = true;
+        }
+        else{
+            id_first = stoi(id) - 1;
+        }
 
-        id_first = (id[0] - '0') - 1;
+        
         
 
         pthread_mutex_lock(&reducerBuffers[id_first].mtx);
@@ -104,6 +117,12 @@ static void *mapper(void *arg) {
         }
 
         reducerBuffers[id_first].data.push({id,topic,score});
+        if(repeated)
+        {
+            reducerBuffers[id_first].repeatedID = true;
+
+        }
+  
         //cout << "produced!!! " << inputLine<< endl;
 
         pthread_cond_signal(&reducerBuffers[id_first].cond_empty);
@@ -142,7 +161,7 @@ static void *reducer(void *arg) {
     item testData;
     string id;
 
-    cout << "got here Reducer" << num << endl;
+   
     while(true)
     {
 
@@ -155,15 +174,29 @@ static void *reducer(void *arg) {
                 pthread_mutex_unlock(&finished_mtx);
                 pthread_mutex_unlock(&reducerBuffers[num].mtx);
 
-                for(int i = 0 ; i < 4; i++)
+
+
+                if(reducerBuffers[num].repeatedID)
                 {
-                    id.append(to_string(num +1));
+                    for(int i = 0 ; i < 4; i++)
+                    {
+                        id.append(to_string(num +1));
+                    }
+
                 }
-            
+                else{
+                    id = to_string(num+1);
+                    for(int i = 1; i < 4 - id.length() ; i++)
+                    id.insert(0,"0");
+                }
+
+
+                pthread_mutex_lock(&printing_mtx);
                 for (auto it = dataMap.begin(); it != dataMap.end(); ++it)
                 {
                     cout << "(" << id << "," << it->first << "," << it->second << ")"<< endl;
                 }
+                pthread_mutex_unlock(&printing_mtx);
                 
                 pthread_exit((void *)arg);
             }
@@ -174,7 +207,7 @@ static void *reducer(void *arg) {
         }
 
         testData = reducerBuffers[num].data.front();
-        cout << "reduced ! " << testData.id << testData.topic <<testData.score << endl;
+        
 
         reducerBuffers[num].data.pop();
 
