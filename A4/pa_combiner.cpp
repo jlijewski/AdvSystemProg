@@ -19,7 +19,7 @@ using namespace std;
 
 int bufferSize;
 
-void *mem;
+
 
 bool finished = false;
 int numberOfReducers;
@@ -32,15 +32,17 @@ struct item{
 
 struct buffer {
     queue<item> data;
-    pthread_cond_t cond_full = PTHREAD_COND_INITIALIZER;
-    pthread_cond_t cond_empty = PTHREAD_COND_INITIALIZER;
-    pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t cond_full;
+    pthread_cond_t cond_empty;
+    pthread_mutex_t mtx;
     bool repeatedID = false;
 };
-pthread_mutex_t finished_mtx = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t printing_mtx = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t finished_mtx;
+pthread_mutex_t printing_mtx;
 
-map<int,buffer> reducerBuffers;
+buffer *mem;
+
+//map<int,buffer> reducerBuffers;
 
 static void *mapper(void *arg) {
 
@@ -114,23 +116,33 @@ static void *mapper(void *arg) {
         
         
 
-        pthread_mutex_lock(&reducerBuffers[id_first].mtx);
-        while (reducerBuffers[id_first].data.size() >= bufferSize) {
-            pthread_cond_wait(&reducerBuffers[id_first].cond_full, &reducerBuffers[id_first].mtx);
-        }
+        //pthread_mutex_lock(&reducerBuffers[id_first].mtx);
+        pthread_mutex_lock(&mem[id_first].mtx);
+        // while (reducerBuffers[id_first].data.size() >= bufferSize) {
+        //     pthread_cond_wait(&reducerBuffers[id_first].cond_full, &reducerBuffers[id_first].mtx);
+        // }
+        while (mem[id_first].data.size() >= bufferSize) {
+                pthread_cond_wait(&mem[id_first].cond_full, &mem[id_first].mtx);
+            }
 
-        reducerBuffers[id_first].data.push({id,topic,score});
+       // reducerBuffers[id_first].data.push({id,topic,score});
+        mem[id_first].data.push({id,topic,score});
         if(repeated)
         {
-            reducerBuffers[id_first].repeatedID = true;
+            //reducerBuffers[id_first].repeatedID = true;
+            mem[id_first].repeatedID = true;
 
         }
   
         //cout << "produced!!! " << inputLine<< endl;
 
-        pthread_cond_signal(&reducerBuffers[id_first].cond_empty);
+        // pthread_cond_signal(&reducerBuffers[id_first].cond_empty);
 
-        pthread_mutex_unlock(&reducerBuffers[id_first].mtx);
+        // pthread_mutex_unlock(&reducerBuffers[id_first].mtx);
+
+        pthread_cond_signal(&mem[id_first].cond_empty);
+
+        pthread_mutex_unlock(&mem[id_first].mtx);
 
 
    
@@ -146,7 +158,8 @@ static void *mapper(void *arg) {
     pthread_mutex_unlock(&finished_mtx);
 
     for (int i = 0; i < numberOfReducers; ++i) {
-        pthread_cond_broadcast(&reducerBuffers[i].cond_empty);
+        //pthread_cond_broadcast(&reducerBuffers[i].cond_empty);
+        pthread_cond_broadcast(&mem[i].cond_empty);
     }
 
     pthread_exit((void *)arg);
@@ -168,18 +181,18 @@ static void *reducer(void *arg) {
     while(true)
     {
 
-        pthread_mutex_lock(&reducerBuffers[num].mtx);
+        pthread_mutex_lock(&mem[num].mtx);
 
-        while(reducerBuffers[num].data.empty())
+        while(mem[num].data.empty())
         {
             pthread_mutex_lock(&finished_mtx);
             if (finished) {
                 pthread_mutex_unlock(&finished_mtx);
-                pthread_mutex_unlock(&reducerBuffers[num].mtx);
+                pthread_mutex_unlock(&mem[num].mtx);
 
 
 
-                if(reducerBuffers[num].repeatedID)
+                if(mem[num].repeatedID)
                 {
                     for(int i = 0 ; i < 4; i++)
                     {
@@ -205,18 +218,18 @@ static void *reducer(void *arg) {
             }
             pthread_mutex_unlock(&finished_mtx);
 
-            pthread_cond_wait(&reducerBuffers[num].cond_empty, &reducerBuffers[num].mtx);
+            pthread_cond_wait(&mem[num].cond_empty, &mem[num].mtx);
 
         }
 
-        testData = reducerBuffers[num].data.front();
+        testData = mem[num].data.front();
         
 
-        reducerBuffers[num].data.pop();
+        mem[num].data.pop();
 
-        pthread_cond_signal(&reducerBuffers[num].cond_full);
+        pthread_cond_signal(&mem[num].cond_full);
 
-        pthread_mutex_unlock(&reducerBuffers[num].mtx);
+        pthread_mutex_unlock(&mem[num].mtx);
 
         dataMap[testData.topic] += testData.score;
 
@@ -240,18 +253,33 @@ int main(int argc, char const *argv[])
     int i, create;
 
 
-    mem = mmap(NULL,sizeof(item)*bufferSize*numberOfReducers,PROT_READ | PROT_WRITE, MAP_ANONYMOUS| MAP_PRIVATE,-1,0);
+    mem = (buffer*) mmap(NULL,((sizeof(item)*bufferSize)+sizeof(buffer))*numberOfReducers,PROT_READ | PROT_WRITE, MAP_ANONYMOUS| MAP_PRIVATE,-1,0);
 
     pthread_t reducers[numberOfReducers];
 
+    pthread_mutexattr_t psharedm;
+    pthread_condattr_t psharedc;
+
+    (void) pthread_mutexattr_init(&psharedm);
+    (void) pthread_mutexattr_setpshared(&psharedm,
+        PTHREAD_PROCESS_SHARED);
+    (void) pthread_condattr_init(&psharedc);
+    (void) pthread_condattr_setpshared(&psharedc,
+        PTHREAD_PROCESS_SHARED);
+
     for(i = 0; i < numberOfReducers; i ++)
     {
-        reducerBuffers[i] = {queue<item>()};
+        mem[i].data = {queue<item>()};
+        //reducerBuffers[i] = {queue<item>()};
+        pthread_mutex_init(&mem[i].mtx,&psharedm);
+        pthread_cond_init(&mem[i].cond_full,&psharedc);
+        pthread_cond_init(&mem[i].cond_empty,&psharedc);
         create = pthread_create(&reducers[i], NULL, reducer, (void*) i);
   
 
     }
-
+    pthread_mutex_init(&finished_mtx,&psharedm);
+    pthread_mutex_init(&printing_mtx,&psharedm);
     create = pthread_create(&tid, NULL, mapper, (void*)i);
 
 
@@ -265,7 +293,7 @@ int main(int argc, char const *argv[])
 
     }
     int ret;
-    ret = munmap(mem,sizeof(item)*bufferSize*numberOfReducers);
+    ret = munmap(mem,((sizeof(item)*bufferSize)+sizeof(buffer))*numberOfReducers);
  
     
     return 0;
